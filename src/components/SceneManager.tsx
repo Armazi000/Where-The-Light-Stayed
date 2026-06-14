@@ -5,27 +5,48 @@ import EmptyRoom from "../scenes/EmptyRoom";
 import StoryTextOverlay from "./StoryTextOverlay";
 import { useGameState } from "../state/GameState";
 import { AudioManager } from "../audio/AudioManager";
-import { TITLE, SUBTITLE, START_PROMPT } from "../data/story";
+import {
+  TITLE,
+  SUBTITLE,
+  START_PROMPT,
+  PROGRESS_LABEL,
+  COMPLETE_TEXT,
+} from "../data/story";
 
 /**
  * SceneManager — owns the canvas and all the 2D overlays that sit on top of it.
  *
  * For this slice there is exactly one scene (The Empty Room). The manager wires
- * together: the 3D canvas, the title/start screen, the story text, the audio,
- * and the ending fade.
+ * together: the 3D canvas + camera controls, the title/start screen, the
+ * progress counter, the story text, the audio, and the ending/complete fades.
  */
 export default function SceneManager() {
-  const { started, start, ending } = useGameState();
+  const {
+    started,
+    start,
+    clickedCount,
+    totalObjects,
+    ending,
+    complete,
+  } = useGameState();
 
-  // Start the soundtrack once the player begins (a user gesture is required
-  // before browsers will allow audio to play).
+  // Fade the background music in once the player begins (browsers require a
+  // user gesture before audio is allowed to play).
   useEffect(() => {
-    if (started) AudioManager.play("ambient", 0.6, 3500);
+    if (started) AudioManager.play("ambient", 3500);
   }, [started]);
 
-  // When the ending begins, drift into the warmer resolution track.
+  // Play the interaction sound each time a new object is clicked.
   useEffect(() => {
-    if (ending) AudioManager.crossfadeTo("ending", 0.55, 5000);
+    if (clickedCount > 0) AudioManager.playClick();
+  }, [clickedCount]);
+
+  // During the ending: fade in the swell layer and duck the ambient under it.
+  useEffect(() => {
+    if (ending) {
+      AudioManager.play("swell", 5000);
+      AudioManager.fadeTo("ambient", 0.35, 5000);
+    }
   }, [ending]);
 
   return (
@@ -39,8 +60,10 @@ export default function SceneManager() {
         <color attach="background" args={["#05060a"]} />
         <EmptyRoom />
 
-        {/* Gentle, constrained camera movement — look around, but stay put. */}
+        {/* Gentle, constrained camera movement — look around, but stay put.
+            Disabled during the ending so the CameraRig can take over. */}
         <OrbitControls
+          enabled={!ending}
           enablePan={false}
           enableZoom={false}
           target={[0, 1.4, -1]}
@@ -54,11 +77,24 @@ export default function SceneManager() {
         />
       </Canvas>
 
+      {/* Progress counter, e.g. "1 / 3 remembered". Hidden before start and
+          once the ending begins. */}
+      {started && !ending && (
+        <div className="progress">
+          {clickedCount} / {totalObjects} {PROGRESS_LABEL}
+        </div>
+      )}
+
       {/* Prose fades in over the scene. */}
       <StoryTextOverlay />
 
       {/* Warm full-screen wash that grows during the ending. */}
       <div className={`ending-fade ${ending ? "is-active" : ""}`} />
+
+      {/* Fade-to-black + completion card once the room has finished. */}
+      <div className={`complete-screen ${complete ? "is-active" : ""}`}>
+        <h2>{COMPLETE_TEXT}</h2>
+      </div>
 
       {/* Title / start screen. Clicking it begins the experience + audio. */}
       {!started && (
