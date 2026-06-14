@@ -1,41 +1,42 @@
 import { Howl, Howler } from "howler";
 
-/**
- * AudioManager — a small wrapper around Howler.js for the slice.
- *
- * It can play a looping track and fade between volumes / tracks. It is written
- * to fail quietly: if an audio file is missing (none are committed yet), the
- * experience keeps running in silence instead of crashing.
- *
- * Drop real files into /public/audio and the keys below will pick them up.
- */
-
-// The tracks the scene knows about. Add files to /public/audio to hear them.
+// ============================================================================
+// AUDIO FILES — point these at your real files when you have them.
+// ============================================================================
+// Drop files into /public/audio and keep these paths in sync. The game runs
+// fine if a file is missing: AudioManager just logs a warning and stays silent.
+//
+//   loop:   true  = background music / ambience that repeats
+//           false = one-shot sound effect (the click)
+//   volume: the level this track fades up to (0..1)
 const TRACKS = {
-  // Sparse piano + soft pad ambience for The Empty Room.
-  ambient: "/audio/empty-room-ambient.mp3",
-  // A warmer resolution that fades in for the ending (optional).
-  ending: "/audio/empty-room-ending.mp3",
+  // Background music — sparse piano + soft pad. Fades in when the game starts.
+  ambient: { src: "/audio/empty-room-ambient.mp3", loop: true, volume: 0.6 },
+  // Ending swell — a second music layer that fades in OVER the ambient during
+  // the finale (it does not replace it).
+  swell: { src: "/audio/empty-room-swell.mp3", loop: true, volume: 0.55 },
+  // Interaction sound — played once each time an object is clicked.
+  click: { src: "/audio/click.mp3", loop: false, volume: 0.5 },
 } as const;
 
 export type TrackKey = keyof typeof TRACKS;
 
 class AudioManagerImpl {
   private howls = new Map<TrackKey, Howl>();
-  private current: TrackKey | null = null;
 
   // Lazily create (and cache) a Howl for a track key.
   private getHowl(key: TrackKey): Howl {
     let howl = this.howls.get(key);
     if (!howl) {
+      const cfg = TRACKS[key];
       howl = new Howl({
-        src: [TRACKS[key]],
-        loop: true,
+        src: [cfg.src],
+        loop: cfg.loop,
         volume: 0,
-        html5: true, // stream long ambience instead of decoding it all up front
+        html5: cfg.loop, // stream long loops; decode short SFX in memory
         onloaderror: () =>
           console.warn(
-            `[AudioManager] Missing audio file "${TRACKS[key]}". Running silently.`
+            `[AudioManager] Missing audio file "${cfg.src}". Running silently.`
           ),
       });
       this.howls.set(key, howl);
@@ -43,34 +44,24 @@ class AudioManagerImpl {
     return howl;
   }
 
-  /** Start a track and fade it in. Safe to call after a user gesture. */
-  play(key: TrackKey, targetVolume = 0.6, fadeMs = 2500) {
+  /** Start a looping track and fade it in. Call after a user gesture. */
+  play(key: TrackKey, fadeMs = 2500) {
     const howl = this.getHowl(key);
-    this.current = key;
     if (!howl.playing()) howl.play();
+    howl.fade(howl.volume(), TRACKS[key].volume, fadeMs);
+  }
+
+  /** Fade a track to a new volume (e.g. duck the ambient under the swell). */
+  fadeTo(key: TrackKey, targetVolume: number, fadeMs = 1500) {
+    const howl = this.getHowl(key);
     howl.fade(howl.volume(), targetVolume, fadeMs);
   }
 
-  /** Fade the currently playing track to a new volume. */
-  fadeTo(targetVolume: number, fadeMs = 1500) {
-    if (!this.current) return;
-    const howl = this.getHowl(this.current);
-    howl.fade(howl.volume(), targetVolume, fadeMs);
-  }
-
-  /** Crossfade from the current track to another one. */
-  crossfadeTo(key: TrackKey, targetVolume = 0.6, fadeMs = 3000) {
-    if (this.current === key) {
-      this.fadeTo(targetVolume, fadeMs);
-      return;
-    }
-    // Fade the old track out and remember to stop it once it's silent.
-    if (this.current) {
-      const prev = this.getHowl(this.current);
-      prev.fade(prev.volume(), 0, fadeMs);
-      window.setTimeout(() => prev.stop(), fadeMs);
-    }
-    this.play(key, targetVolume, fadeMs);
+  /** Play the one-shot interaction sound from the start. */
+  playClick() {
+    const howl = this.getHowl("click");
+    howl.volume(TRACKS.click.volume);
+    howl.play();
   }
 
   /** Fade everything out and stop. */
@@ -79,7 +70,6 @@ class AudioManagerImpl {
       howl.fade(howl.volume(), 0, fadeMs);
       window.setTimeout(() => howl.stop(), fadeMs);
     });
-    this.current = null;
   }
 
   /** Master mute toggle for the whole experience. */

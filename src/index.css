@@ -34,6 +34,57 @@ body,
   inset: 0;
 }
 
+/* --- Progress counter -------------------------------------------- */
+.progress {
+  position: absolute;
+  top: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+/* --- Completion card (fade to black) ----------------------------- */
+.complete-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  /* Slow fade so the lit room dissolves gently into black. */
+  transition: opacity 4s ease;
+}
+
+.complete-screen.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.complete-screen h2 {
+  margin: 0;
+  color: var(--text-soft);
+  font-weight: 400;
+  font-size: clamp(1.2rem, 3.4vw, 2rem);
+  letter-spacing: 0.18em;
+  /* Hold on black first, then let the words appear. */
+  opacity: 0;
+  animation: card-text 3s ease 2.5s forwards;
+}
+
+@keyframes card-text {
+  to {
+    opacity: 1;
+  }
+}
+
 /* --- Story text -------------------------------------------------- */
 .story-text {
   position: absolute;

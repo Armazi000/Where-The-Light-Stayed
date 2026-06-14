@@ -1,52 +1,73 @@
-import { useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useMemo, useRef } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
 import { Sparkles } from "@react-three/drei";
-import { MathUtils, Mesh, MeshStandardMaterial, PointLight } from "three";
+import {
+  AmbientLight,
+  Color,
+  MathUtils,
+  Mesh,
+  MeshStandardMaterial,
+  PointLight,
+  Vector3,
+} from "three";
 import InteractableObject from "../components/InteractableObject";
 import { useGameState } from "../state/GameState";
+
+// ============================================================================
+// OBJECT POSITIONS — move the radio / notebook / window here ([x, y, z]).
+// ============================================================================
+const POSITIONS = {
+  radio: [1.4, 0.72, -1.8] as [number, number, number],
+  notebook: [-1.5, 0.52, -1.0] as [number, number, number],
+  window: [0, 1.7, -2.98] as [number, number, number],
+};
 
 /**
  * Scene 01 — The Empty Room.
  *
  * A dark, half-finished bedroom floating in fog. Three things can be touched:
- * a radio, a notebook, and the window. Once all three are seen, a warm light
- * slowly grows beyond the glass.
- *
- * This file holds the whole diorama plus its three small object components so
- * the scene reads top-to-bottom in one place.
+ * a radio, a notebook, and the window. The room starts cold and lonely; each
+ * object clicked warms it a little. Once all three are seen, a warm light grows
+ * beyond the glass and the camera drifts toward it.
  */
 export default function EmptyRoom() {
-  const { isClicked, clickObject, ending } = useGameState();
+  const { isClicked, clickObject, warmth, ending } = useGameState();
 
   return (
     <>
       {/* Soft fog swallows the edges of the room into the dark. */}
       <fog attach="fog" args={["#070811", 4, 12]} />
 
-      {/* --- Lighting: dim and cool, so the warm ending reads strongly. --- */}
-      <ambientLight intensity={0.12} color="#5566aa" />
-      {/* A faint warm glow far away — present from the start, like a memory. */}
-      <pointLight position={[-5, 3, -6]} intensity={6} distance={14} color="#ffc38a" />
-      {/* Cool moonlight skimming the room. */}
-      <directionalLight position={[3, 5, 2]} intensity={0.25} color="#9fb4ff" />
+      {/* Lighting that warms up with progress and blooms during the ending. */}
+      <WarmLighting warmth={warmth} ending={ending} />
 
-      {/* --- The room shell: floor, back wall (with a window hole), side wall. --- */}
+      {/* The room shell, furniture, and the world beyond the window. */}
       <RoomShell />
-
-      {/* --- Furniture: just enough to feel lived-in but unfinished. --- */}
       <Bed />
       <Nightstand />
 
-      {/* --- The three interactable objects. --- */}
-      <Radio clicked={isClicked("radio")} onClick={() => clickObject("radio")} />
-      <Notebook clicked={isClicked("notebook")} onClick={() => clickObject("notebook")} />
+      {/* The three interactable objects (disabled once the ending begins). */}
+      <Radio
+        clicked={isClicked("radio")}
+        disabled={ending}
+        onClick={() => clickObject("radio")}
+      />
+      <Notebook
+        clicked={isClicked("notebook")}
+        disabled={ending}
+        onClick={() => clickObject("notebook")}
+      />
       <WindowObject
         clicked={isClicked("window")}
+        disabled={ending}
         onClick={() => clickObject("window")}
       />
 
       {/* The light beyond the glass — grows once everything has been seen. */}
-      <WindowExterior ending={ending} />
+      <WindowExterior warmth={warmth} ending={ending} />
+
+      {/* Camera gently focuses toward the window during the ending. */}
+      <CameraRig active={ending} />
 
       {/* Slow, drifting dust caught in the light. */}
       <Sparkles
@@ -63,14 +84,86 @@ export default function EmptyRoom() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Lighting — drives the emotional warm-up                            */
+/* ------------------------------------------------------------------ */
+
+// Cold/lonely color at the start, warm/golden by the end.
+const COLD = new Color("#5566aa");
+const WARM = new Color("#ffd2a0");
+
+function WarmLighting({ warmth, ending }: { warmth: number; ending: boolean }) {
+  const ambient = useRef<AmbientLight>(null);
+  const fill = useRef<PointLight>(null);
+  // Reusable color so we don't allocate one every frame.
+  const tmp = useMemo(() => new Color(), []);
+
+  useFrame((_, delta) => {
+    // Frame-rate-independent smoothing toward the targets.
+    const k = 1 - Math.pow(0.05, delta);
+    // 0..1 warmth, pushed to full during the ending.
+    const w = ending ? 1 : warmth;
+
+    if (ambient.current) {
+      const targetIntensity = 0.12 + w * 0.45 + (ending ? 0.25 : 0);
+      ambient.current.intensity = MathUtils.lerp(
+        ambient.current.intensity,
+        targetIntensity,
+        k
+      );
+      tmp.copy(COLD).lerp(WARM, w);
+      ambient.current.color.lerp(tmp, k);
+    }
+
+    if (fill.current) {
+      const targetIntensity = w * 2.4 + (ending ? 2.5 : 0);
+      fill.current.intensity = MathUtils.lerp(
+        fill.current.intensity,
+        targetIntensity,
+        k
+      );
+    }
+  });
+
+  return (
+    <>
+      <ambientLight ref={ambient} intensity={0.12} color="#5566aa" />
+      {/* A faint warm glow far away — present from the start, like a memory. */}
+      <pointLight position={[-5, 3, -6]} intensity={6} distance={14} color="#ffc38a" />
+      {/* Cool moonlight skimming the room. */}
+      <directionalLight position={[3, 5, 2]} intensity={0.25} color="#9fb4ff" />
+      {/* Warm fill that grows with the player's progress. */}
+      <pointLight ref={fill} position={[0, 2.2, -0.5]} intensity={0} distance={9} color="#ffcaa0" />
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Camera rig — gentle focus toward the window during the ending      */
+/* ------------------------------------------------------------------ */
+
+function CameraRig({ active }: { active: boolean }) {
+  const { camera } = useThree();
+  // Where the camera drifts to, and what it looks at (the window/light).
+  const destination = useMemo(() => new Vector3(0, 1.6, 1.6), []);
+  const lookAt = useMemo(() => new Vector3(0, 1.7, -4), []);
+
+  useFrame((_, delta) => {
+    if (!active) return; // OrbitControls owns the camera until the ending
+    const k = 1 - Math.pow(0.3, delta); // slow, gentle drift
+    camera.position.lerp(destination, k);
+    camera.lookAt(lookAt);
+  });
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Room shell                                                          */
 /* ------------------------------------------------------------------ */
 
 // Shared muted material for the architecture.
 function wallMaterial() {
-  return (
-    <meshStandardMaterial color="#1a1c26" roughness={0.95} metalness={0.0} />
-  );
+  return <meshStandardMaterial color="#1a1c26" roughness={0.95} metalness={0.0} />;
 }
 
 function RoomShell() {
@@ -149,12 +242,17 @@ function Nightstand() {
 /* Interactable objects                                               */
 /* ------------------------------------------------------------------ */
 
-type ObjProps = { clicked: boolean; onClick: () => void };
+type ObjProps = { clicked: boolean; disabled: boolean; onClick: () => void };
 
 // 1. Radio — sits on the nightstand.
-function Radio({ clicked, onClick }: ObjProps) {
+function Radio({ clicked, disabled, onClick }: ObjProps) {
   return (
-    <InteractableObject position={[1.4, 0.72, -1.8]} clicked={clicked} onClick={onClick}>
+    <InteractableObject
+      position={POSITIONS.radio}
+      clicked={clicked}
+      disabled={disabled}
+      onClick={onClick}
+    >
       {/* body */}
       <mesh>
         <boxGeometry args={[0.5, 0.28, 0.25]} />
@@ -179,11 +277,12 @@ function Radio({ clicked, onClick }: ObjProps) {
 }
 
 // 2. Notebook — lies open on the bed.
-function Notebook({ clicked, onClick }: ObjProps) {
+function Notebook({ clicked, disabled, onClick }: ObjProps) {
   return (
     <InteractableObject
-      position={[-1.5, 0.52, -1.0]}
+      position={POSITIONS.notebook}
       clicked={clicked}
+      disabled={disabled}
       onClick={onClick}
     >
       <group rotation={[-Math.PI / 2, 0, 0.3]}>
@@ -203,9 +302,14 @@ function Notebook({ clicked, onClick }: ObjProps) {
 }
 
 // 3. Window — the frame in the back wall is itself the clickable object.
-function WindowObject({ clicked, onClick }: ObjProps) {
+function WindowObject({ clicked, disabled, onClick }: ObjProps) {
   return (
-    <InteractableObject position={[0, 1.7, -2.98]} clicked={clicked} onClick={onClick}>
+    <InteractableObject
+      position={POSITIONS.window}
+      clicked={clicked}
+      disabled={disabled}
+      onClick={onClick}
+    >
       <group>
         {/* frame: four thin bars around the opening */}
         <mesh position={[0, 0.82, 0]}>
@@ -238,23 +342,22 @@ function WindowObject({ clicked, onClick }: ObjProps) {
 /* The world beyond the window                                        */
 /* ------------------------------------------------------------------ */
 
-// A sky plane + a light behind the window that both warm up during the ending.
-function WindowExterior({ ending }: { ending: boolean }) {
+// A sky plane + a light behind the window that both warm up: a touch with
+// general progress, then fully during the ending.
+function WindowExterior({ warmth, ending }: { warmth: number; ending: boolean }) {
   const sky = useRef<Mesh>(null);
   const light = useRef<PointLight>(null);
 
   useFrame((_, delta) => {
-    // Smoothly approach the target each frame (frame-rate independent).
     const k = 1 - Math.pow(0.001, delta);
+    const w = ending ? 1 : warmth * 0.25; // hint of light early, full at the end
 
     if (sky.current) {
       const mat = sky.current.material as MeshStandardMaterial;
-      const target = ending ? 1.6 : 0.0;
-      mat.emissiveIntensity = MathUtils.lerp(mat.emissiveIntensity, target, k);
+      mat.emissiveIntensity = MathUtils.lerp(mat.emissiveIntensity, w * 1.6, k);
     }
     if (light.current) {
-      const target = ending ? 18 : 0;
-      light.current.intensity = MathUtils.lerp(light.current.intensity, target, k);
+      light.current.intensity = MathUtils.lerp(light.current.intensity, w * 18, k);
     }
   });
 
